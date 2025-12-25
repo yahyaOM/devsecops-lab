@@ -3,9 +3,11 @@ import sqlite3
 import subprocess
 import hashlib
 import os
+import bcrypt  # Added for secure hashing
 
 app = Flask(__name__)
-SECRET_KEY = "dev-secret-key-12345"   # Hardcoded secret
+# In a real app, use environment variables, not hardcoded strings
+SECRET_KEY = os.environ.get("SECRET_KEY", "secure-fallback-key")
 
 @app.route("/login", methods=["POST"])
 def login():
@@ -13,56 +15,41 @@ def login():
     password = request.json.get("password")
     conn = sqlite3.connect("users.db")
     cursor = conn.cursor()
-    # VULNERABILITY: SQL Injection via f-string
-    query = f"SELECT * FROM users WHERE username='{username}' AND password='{password}'"
-    cursor.execute(query)
+    # FIXED: Using parameterized query to prevent SQL Injection
+    query = "SELECT password FROM users WHERE username=?"
+    cursor.execute(query, (username,))
     result = cursor.fetchone()
-    if result:
+    
+    if result and bcrypt.checkpw(password.encode(), result[0]):
         return {"status": "success", "user": username}
     return {"status": "error", "message": "Invalid credentials"}
 
 @app.route("/ping", methods=["POST"])
 def ping():
     host = request.json.get("host", "")
-    # VULNERABILITY: Command Injection
-    cmd = f"ping -c 1 {host}"
-    output = subprocess.check_output(cmd, shell=True)
-    return {"output": output.decode()}
+    # FIXED: Simple validation (only allowing alphanumeric/dots)
+    if not all(c.isalnum() or c == '.' for c in host):
+        return {"error": "Invalid host format"}, 400
+    
+    # FIXED: Passing host as an argument rather than shell string
+    process = subprocess.run(["ping", "-c", "1", host], capture_output=True, text=True)
+    return {"output": process.stdout}
 
 @app.route("/compute", methods=["POST"])
 def compute():
-    expression = request.json.get("expression", "1+1")
-    # VULNERABILITY: Dangerous use of eval()
-    result = eval(expression)   # CRITIQUE
-    return {"result": result}
+    # FIXED: Removed eval(). Using a safe alternative or simple logic
+    return {"message": "Direct expression evaluation is disabled for security."}
 
 @app.route("/hash", methods=["POST"])
 def hash_password():
     pwd = request.json.get("password", "admin")
-    # VULNERABILITY: Use of weak MD5 hashing
-    hashed = hashlib.md5(pwd.encode()).hexdigest()
-    return {"md5": hashed}
-
-@app.route("/readfile", methods=["POST"])
-def readfile():
-    filename = request.json.get("filename", "test.txt")
-    # VULNERABILITY: Path Traversal potential
-    with open(filename, "r") as f:
-        content = f.read()
-    return {"content": content}
-
-@app.route("/debug", methods=["GET"])
-def debug():
-    # VULNERABILITY: Sensitive details exposure
-    return {
-        "debug": True,
-        "secret_key": SECRET_KEY,
-        "environment": dict(os.environ)
-    }
+    # FIXED: Using bcrypt instead of MD5
+    hashed = bcrypt.hashpw(pwd.encode(), bcrypt.gensalt())
+    return {"hash": hashed.decode()}
 
 @app.route("/hello", methods=["GET"])
 def hello():
-    return {"message": "Welcome to the DevSecOps vulnerable API"}
+    return {"message": "Welcome to the Secured DevSecOps API"}
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000)
